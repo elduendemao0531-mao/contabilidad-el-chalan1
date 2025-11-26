@@ -1,0 +1,70 @@
+/* Contenedor general de la app */
+.app-container {
+  max-width: 420px;        /* Tamaño tipo app móvil */
+  margin: 0 auto;          /* Centrar en la pantalla */
+  padding: 20px;           /* Espacio interno */
+  background: #b87f7f;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(233, 12, 12, 0.08);
+}
+
+/* Para que el fondo no quede vacío */
+body {
+  background: #8daaec;     /* Azul muy suave */
+  font-family: 'Inter', sans-serif;
+  padding: 20px;
+}
+
+/* Títulos centrados */
+h1, h2, h3 {
+  text-align: center;
+  color: #0d62d8;
+  font-weight: 600;
+}
+
+/* Inputs */
+input, select {
+  width: 100%;
+  padding: 12px;
+  margin-top: 10px;
+  margin-bottom: 16px;
+  border: 1px solid #c7d4ff;
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 15px;
+}
+
+/* Labels más bonitos */
+label {
+  color: #002e6a;
+  font-weight: 500;
+  margin-bottom: 4px;
+  display: block;
+}
+
+/* Botón moderno */
+button {
+  width: 100%;
+  padding: 14px;
+  background: #0058d4;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #0047a8;
+}
+
+/* Para las secciones */
+.section {
+  margin-bottom: 25px;
+  padding: 18px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+

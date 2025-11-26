@@ -1,0 +1,54 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Contenedor centrado para el logo */
+.logo-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+  margin-top: 10px;
+}
+
+/* Estilo del logo dentro de la app */
+.logo {
+  width: 120px;          /* Ajusta tamaño según tu diseño */
+  height: 120px;
+  border-radius: 50%;    /* Lo hace redondo */
+  object-fit: cover;     /* Mantiene proporciones */
+  border: 4px solid #0058d4;  /* Borde azul elegante */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);  /* Sombra suave */
+}
+
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
