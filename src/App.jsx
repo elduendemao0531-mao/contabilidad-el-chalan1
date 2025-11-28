@@ -34,7 +34,8 @@ if (Object.keys(firebaseConfig).length > 0) {
 // --- UTILIDAD PARA EXPORTAR A CSV (EXCEL) ---
 const exportToCSV = (data, headers, filename) => {
     if (!data || !data.length) {
-        alert("No hay datos para exportar.");
+        // Usamos un modal simple en lugar de alert para mejor UX en iframes
+        console.warn("No hay datos para exportar.");
         return;
     }
     
@@ -122,12 +123,15 @@ const App = () => {
         return () => unsubscribe();
     }, []);
 
-    // --- 2. Carga de Datos ---
+    // --- 2. Carga de Datos (CORREGIDO: RUTA PÚBLICA COMPARTIDA) ---
 
     useEffect(() => {
-        if (!isAuthReady || !userId || !db) return;
+        // Ya no dependemos estrictamente de userId para la RUTA, pero sí esperamos a que auth esté listo
+        if (!isAuthReady || !db) return;
         setLoading(true);
-        const basePath = `artifacts/${appId}/users/${userId}`;
+        
+        // CAMBIO CRÍTICO 1: Usar 'public/data' en lugar de 'users/userId' para compartir datos entre dispositivos
+        const basePath = `artifacts/${appId}/public/data`;
         
         // Listeners
         const unsubs = [
@@ -141,7 +145,11 @@ const App = () => {
         
         setLoading(false);
         return () => unsubs.forEach(u => u());
-    }, [isAuthReady, userId]);
+    }, [isAuthReady]); // Quitamos userId de dependencias porque la ruta es estática/pública
+
+    // Constante auxiliar para escribir datos en la ruta correcta
+    const getSharedCollection = (collectionName) => collection(db, `artifacts/${appId}/public/data/${collectionName}`);
+    const getSharedDoc = (collectionName, docId) => doc(db, `artifacts/${appId}/public/data/${collectionName}`, docId);
 
     // ------------------------------------
     // VISTA 1: INVENTARIO
@@ -174,12 +182,13 @@ const App = () => {
             }
 
             try {
-                const productData = { name: name.trim(), code: code.trim(), cost: Number(cost), price: Number(price), stock: Number(stock), userId: userId };
+                // Guardamos userId para auditoría, pero en la ruta compartida
+                const productData = { name: name.trim(), code: code.trim(), cost: Number(cost), price: Number(price), stock: Number(stock), lastEditedBy: userId };
                 if (id) {
-                    await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/inventory`, id), productData);
+                    await updateDoc(getSharedDoc('inventory', id), productData);
                     setMessage(`Producto actualizado.`); setEditingProduct(null);
                 } else {
-                    await addDoc(collection(db, `artifacts/${appId}/users/${userId}/inventory`), { ...productData, createdAt: Timestamp.now() });
+                    await addDoc(getSharedCollection('inventory'), { ...productData, createdAt: Timestamp.now() });
                     setMessage(`Producto agregado.`); setIsAdding(false);
                 }
                 setTimeout(() => setMessage(''), 3000);
@@ -256,9 +265,6 @@ const App = () => {
         );
     };
 
-    // --- VISTAS SIMPLIFICADAS (StockInflow, StockOutflow, CashInput, Transactions) ---
-    // (Mantenemos la lógica intacta pero condensada para ahorrar espacio y enfocarnos en lo nuevo)
-
     const StockInflowView = () => {
         const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
         const [prodId, setProdId] = useState('');
@@ -270,10 +276,10 @@ const App = () => {
             if(!prodId || !qty || qty<=0) return;
             const p = products.find(x=>x.id===prodId);
             try {
-                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/stock_inflows`), {
-                    productId: prodId, productName: p.name, quantity: Number(qty), date: Timestamp.fromDate(new Date(date)), registeredAt: Timestamp.now(), userId
+                await addDoc(getSharedCollection('stock_inflows'), {
+                    productId: prodId, productName: p.name, quantity: Number(qty), date: Timestamp.fromDate(new Date(date)), registeredAt: Timestamp.now(), createdBy: userId
                 });
-                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/inventory`, prodId), { stock: p.stock + Number(qty) });
+                await updateDoc(getSharedDoc('inventory', prodId), { stock: p.stock + Number(qty) });
                 setMsg(`Ingreso registrado: ${qty} x ${p.name}`); setQty('');
             } catch(e){ console.error(e); }
         };
@@ -306,22 +312,33 @@ const App = () => {
         const [msg, setMsg] = useState('');
         
         const p = products.find(x=>x.id===prodId);
+        // CAMBIO CRÍTICO 2: Permitir ventas negativas (Devoluciones)
+        // Si tengo 10 y cuento 11, sold es -1 (Devolución)
         const sold = p && endStock!=='' ? p.stock - Number(endStock) : 0;
-        const rev = p && sold>0 ? sold*p.price : 0;
+        const rev = p ? sold * p.price : 0;
+        
         const recent = sales.sort((a,b)=>b.registeredAt-a.registeredAt).slice(0,5);
 
         const handleOut = async () => {
             if(!prodId || endStock==='') return;
-            if(Number(endStock) > p.stock) { setMsg('Error: Stock final mayor al inicial.'); return; }
+            
+            // ELIMINADO: Bloqueo de seguridad para stock negativo
+            // if(Number(endStock) > p.stock) { setMsg('Error: Stock final mayor al inicial.'); return; }
+
             try {
-                if(sold > 0) {
-                    await addDoc(collection(db, `artifacts/${appId}/users/${userId}/sales`), {
+                // Registramos incluso si sold es negativo (devolución)
+                // O si es 0 (solo conteo)
+                if(sold !== 0) {
+                    await addDoc(getSharedCollection('sales'), {
                         productId: prodId, productName: p.name, quantity: sold, unitPrice: p.price, unitCost: p.cost,
-                        amount: rev, cogs: sold*p.cost, date: Timestamp.fromDate(new Date(date)), registeredAt: Timestamp.now(), userId
+                        amount: rev, cogs: sold*p.cost, date: Timestamp.fromDate(new Date(date)), registeredAt: Timestamp.now(), createdBy: userId
                     });
                 }
-                await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/inventory`, prodId), { stock: Number(endStock) });
-                setMsg(`Egreso registrado. Vendidos: ${sold}. Stock actual: ${endStock}`); setEndStock('');
+                await updateDoc(getSharedDoc('inventory', prodId), { stock: Number(endStock) });
+                
+                // Mensaje dinámico según si fue venta o devolución
+                const actionMsg = sold > 0 ? `Vendidos: ${sold}` : `Devueltos/Ajuste: ${Math.abs(sold)}`;
+                setMsg(`Egreso registrado. ${actionMsg}. Stock actual: ${endStock}`); setEndStock('');
             } catch(e){ console.error(e); }
         };
 
@@ -338,17 +355,25 @@ const App = () => {
                     {p && (
                         <>
                             <input type="number" placeholder="Stock Final Contado" value={endStock} onChange={e=>setEndStock(e.target.value)} className="w-full p-2 border rounded"/>
-                            <div className="text-sm bg-gray-50 p-2 rounded">
-                                <p>Vendidos Calc: <strong>{sold > 0 ? sold : 0}</strong></p>
-                                <p>Venta Neta: <strong>{formatCurrency(rev)}</strong></p>
+                            <div className={`text-sm p-2 rounded ${sold < 0 ? 'bg-red-50 text-red-700' : 'bg-gray-50'}`}>
+                                <p>Diferencia (Ventas): <strong>{sold}</strong></p>
+                                <p>Impacto Venta: <strong>{formatCurrency(rev)}</strong></p>
+                                {sold < 0 && <p className="text-xs font-bold mt-1">¡Atención! Esto registrará una devolución de dinero.</p>}
                             </div>
                         </>
                     )}
                     <button onClick={handleOut} disabled={!prodId || endStock===''} className="w-full bg-red-600 text-white py-2 rounded font-bold disabled:opacity-50">Confirmar Conteo</button>
                 </div>
                 <div className="space-y-1">
-                    <h3 className="font-bold text-sm text-gray-600">Ventas Recientes</h3>
-                    {recent.map(r=><div key={r.id} className="bg-white p-2 rounded text-sm border flex justify-between"><span>{r.productName} ({r.quantity})</span><span className="font-bold text-red-600">{formatCurrency(r.amount)}</span></div>)}
+                    <h3 className="font-bold text-sm text-gray-600">Registros Recientes</h3>
+                    {recent.map(r=>(
+                        <div key={r.id} className="bg-white p-2 rounded text-sm border flex justify-between">
+                            <span>{r.productName} ({r.quantity})</span>
+                            <span className={`font-bold ${r.amount < 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {formatCurrency(r.amount)}
+                            </span>
+                        </div>
+                    ))}
                 </div>
             </div>
         );
@@ -362,14 +387,15 @@ const App = () => {
 
         const handleSave = async () => {
             if(!date || !cash || !timeVal) return;
-            // Check dupes
-            if(dailyCashInputs.some(d=>formatDateShort(d.date) === formatDateShort(Timestamp.fromDate(new Date(date))))) {
+            // Check dupes based on date string
+            const targetDateStr = formatDateShort(Timestamp.fromDate(new Date(date)));
+            if(dailyCashInputs.some(d=>formatDateShort(d.date) === targetDateStr)) {
                 setMsg('Ya existe registro para esta fecha.'); return;
             }
             try {
-                await addDoc(collection(db, `artifacts/${appId}/users/${userId}/daily_cash_inputs`), {
+                await addDoc(getSharedCollection('daily_cash_inputs'), {
                     date: Timestamp.fromDate(new Date(date)), totalCashCollected: Number(cash), tiempoValue: Number(timeVal),
-                    productSalesCash: Number(cash)-Number(timeVal), savedAt: Timestamp.now(), userId
+                    productSalesCash: Number(cash)-Number(timeVal), savedAt: Timestamp.now(), createdBy: userId
                 });
                 setMsg('Caja guardada.'); setCash(''); setTimeVal('');
             } catch(e){ console.error(e); }
@@ -401,8 +427,8 @@ const App = () => {
         
         const handleSave = async () => {
             if(!desc || !amt) return;
-            await addDoc(collection(db, `artifacts/${appId}/users/${userId}/transactions`), {
-                type, description: desc, amount: Number(amt), date: Timestamp.now(), userId
+            await addDoc(getSharedCollection('transactions'), {
+                type, description: desc, amount: Number(amt), date: Timestamp.now(), createdBy: userId
             });
             setDesc(''); setAmt('');
         };
@@ -423,7 +449,7 @@ const App = () => {
     };
 
     // ------------------------------------
-    // NUEVA VISTA: DETALLE DE CORTE (Reporte Granular)
+    // VISTA 4: DETALLE DE CORTE (Reporte Granular)
     // ------------------------------------
     const CutDetailView = () => {
         if (!selectedCut) return <div className="p-4">No hay corte seleccionado.</div>;
@@ -467,7 +493,7 @@ const App = () => {
                                 <tr>
                                     <th className="p-3">Producto</th>
                                     <th className="p-3 text-center">Entradas</th>
-                                    <th className="p-3 text-center">Vendidos</th>
+                                    <th className="p-3 text-center">Mov. Neto</th>
                                     <th className="p-3 text-right">Venta ($)</th>
                                     <th className="p-3 text-right">Ganancia ($)</th>
                                     <th className="p-3 text-center">Stock</th>
@@ -481,7 +507,9 @@ const App = () => {
                                         <tr key={idx} className="hover:bg-gray-50">
                                             <td className="p-3 font-medium text-gray-800">{item.name}</td>
                                             <td className="p-3 text-center text-blue-600">{item.inflows > 0 ? `+${item.inflows}` : '-'}</td>
-                                            <td className="p-3 text-center text-red-600 font-bold">{item.sold > 0 ? item.sold : '-'}</td>
+                                            <td className={`p-3 text-center font-bold ${item.sold < 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {item.sold}
+                                            </td>
                                             <td className="p-3 text-right">{formatCurrency(item.revenue)}</td>
                                             <td className="p-3 text-right text-green-600 font-semibold">{formatCurrency(item.profit)}</td>
                                             <td className="p-3 text-center text-gray-500">{item.stockAtCut}</td>
@@ -506,7 +534,7 @@ const App = () => {
 
 
     // ------------------------------------
-    // VISTA 5: CORTES Y RECONCILIACIÓN (MODIFICADA PARA DETALLE)
+    // VISTA 5: CORTES Y RECONCILIACIÓN
     // ------------------------------------
 
     const ReportsView = () => {
@@ -541,7 +569,7 @@ const App = () => {
             const otherIncome = fTrans.filter(t => t.type === 'Income').reduce((sum, e) => sum + e.amount, 0);
             const expenses = fTrans.filter(t => t.type === 'Expense').reduce((sum, e) => sum + e.amount, 0);
 
-            // --- NUEVO: CÁLCULO DE DETALLE POR PRODUCTO ---
+            // --- DETALLE POR PRODUCTO ---
             const breakdown = products.map(prod => {
                 const pSales = fSales.filter(s => s.productId === prod.id);
                 const pInflows = fInflows.filter(i => i.productId === prod.id);
@@ -560,7 +588,7 @@ const App = () => {
                     revenue: revenue,
                     profit: revenue - cogs
                 };
-            }).filter(p => p.sold > 0 || p.inflows > 0); // Solo productos con movimiento
+            }).filter(p => p.sold !== 0 || p.inflows > 0); // Mostrar incluso si sold es negativo
 
             return {
                 totalRevenueProduct, totalCogs, totalPhysicalProductCash, diff, suggestedNomina, totalTiempo, otherIncome, expenses,
@@ -580,7 +608,7 @@ const App = () => {
             const actualNominaPaid = Number(finalNominaInput) - cashAdjustment;
 
             const cutData = {
-                startDate: startTimestamp, endDate: endTimestamp, cutDate: Timestamp.now(), userId,
+                startDate: startTimestamp, endDate: endTimestamp, cutDate: Timestamp.now(), createdBy: userId,
                 reconciliationDifference: m.diff, totalPhysicalProductCash: m.totalPhysicalProductCash,
                 totalRevenueProduct: m.totalRevenueProduct, totalCogs: m.totalCogs,
                 totalOtherIncome: m.otherIncome, totalExpenses: m.expenses, totalTiempo: m.totalTiempo,
@@ -591,7 +619,7 @@ const App = () => {
             };
 
             try {
-                const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/cuts_history`), cutData);
+                const docRef = await addDoc(getSharedCollection('cuts_history'), cutData);
                 setMessage('Corte guardado exitosamente.'); setIsSavingCut(false); setFinalNominaInput('');
                 // Opcional: Redirigir al detalle inmediatamente
                 setSelectedCut({ id: docRef.id, ...cutData });
@@ -661,7 +689,7 @@ const App = () => {
     };
 
     // ------------------------------------
-    // VISTA 6: P&L Y HISTORIAL (MODIFICADA PARA VER DETALLES)
+    // VISTA 6: P&L Y HISTORIAL
     // ------------------------------------
 
     const PLView = () => {
@@ -776,7 +804,7 @@ const App = () => {
         <div className="min-h-screen bg-gray-50 font-sans pb-20">
             <header className="bg-indigo-700 p-4 shadow-lg text-white">
                 <h1 className="text-lg font-extrabold">Billares El Chalan Contabilidad</h1>
-                {userId && <p className="text-xs opacity-75">ID: {userId.slice(0,6)}</p>}
+                {userId && <p className="text-xs opacity-75">ID Sesión: {userId.slice(0,6)} (Modo Compartido)</p>}
             </header>
             <main>{renderContent()}</main>
             <nav className="fixed bottom-0 w-full bg-white border-t flex justify-between px-2 py-1 shadow-2xl overflow-x-auto z-50">
